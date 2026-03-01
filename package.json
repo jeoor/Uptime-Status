@@ -2,12 +2,12 @@
   "name": "uptime-status",
   "version": "1.0.0",
   "private": true,
-  "author": "JLinmr",
+  "author": "敖苛",
   "url": "https://www.kayro.cn",
   "email": "i@kayro.cn",
   "repository": {
     "type": "git",
-    "url": "https://github.com/JLinmr/Uptime-Status"
+    "url": "https://github.com/jeoor"
   },
   "repositoryUrl": "https://github.com/JLinmr/Uptime-Status",
   "type": "module",
