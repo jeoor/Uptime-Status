@@ -1,7 +1,11 @@
 /**
- * API 代理实现
- * 用于代理 UptimeRobot API 请求，避免跨域问题
+ * API 代理实现 - 代理 UptimeRobot API 请求，避免跨域问题
  */
+
+// 内存缓存，减少重复请求
+let cache = null
+let cacheTime = 0
+const CACHE_TTL = 60_000
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -28,33 +32,30 @@ export async function onRequestOptions() {
 
 export async function onRequestPost(context) {
   try {
-    const body = await context.request.json()
+    const now = Date.now()
 
-    // 只请求必要的字段，减少响应大小
-    const params = new URLSearchParams()
-    params.append('api_key', body.api_key)
-    params.append('format', 'json')
-    params.append('all_time_uptime_ratio', '1')
-    params.append('custom_uptime_ranges', body.custom_uptime_ranges || '')
-    params.append('logs', '1')
-
-    if (body.response_times) {
-      params.append('response_times', '1')
-      params.append('response_times_start_date', body.response_times_start_date || '')
-      params.append('response_times_end_date', body.response_times_end_date || '')
+    if (cache && (now - cacheTime) < CACHE_TTL) {
+      return json(cache)
     }
+
+    const body = await context.request.json()
 
     const response = await fetch('https://api.uptimerobot.com/v2/getMonitors', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: params.toString(),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
     })
 
-    const result = await response.json()
-    return json(result)
+    const data = await response.json()
+
+    cache = data
+    cacheTime = now
+
+    return json(data)
 
   } catch (error) {
-    console.error('[cloud-functions/api/status] fetch failed', error)
+    console.error('[cloud-functions/api/status]', error)
+    if (cache) return json(cache)
     return json({ stat: 'fail', message: error.message }, 500)
   }
 }
