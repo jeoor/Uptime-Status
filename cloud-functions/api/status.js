@@ -1,47 +1,60 @@
 /**
  * API 代理实现
- * 这是一个边缘函数，运行在边缘节点上
  * 用于代理 UptimeRobot API 请求，避免跨域问题
- * 
- * 支持以下部署平台：
- * - 腾讯云 EdgeOne Pages
- * - Cloudflare Pages
- * 
- * 环境变量配置说明：
- * 在 .env 文件中设置 VITE_UPTIMEROBOT_API_URL:
- * - 使用默认配置：设置为 "/api/status"
- * - 其他部署方式：设置为你的完整代理地址
  */
 
-export async function onRequest(context) {
-  // 设置 CORS 头
-  const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type'
-  }
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'access-control-allow-origin': '*',
+      'access-control-allow-methods': 'GET, POST, OPTIONS',
+      'access-control-allow-headers': 'Content-Type',
+    },
+  })
+}
 
-  // 处理 OPTIONS 请求
-  if (context.request.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders })
-  }
+export async function onRequestOptions() {
+  return new Response(null, {
+    status: 200,
+    headers: {
+      'access-control-allow-origin': '*',
+      'access-control-allow-methods': 'GET, POST, OPTIONS',
+      'access-control-allow-headers': 'Content-Type',
+    },
+  })
+}
 
+export async function onRequestPost(context) {
   try {
-    // 从请求中获取数据
-    const data = await context.request.json()
+    const body = await context.request.json()
 
-    // 转发请求到 UptimeRobot API
+    // 只请求必要的字段，减少响应大小
+    const params = new URLSearchParams()
+    params.append('api_key', body.api_key)
+    params.append('format', 'json')
+    params.append('all_time_uptime_ratio', '1')
+    params.append('custom_uptime_ranges', body.custom_uptime_ranges || '')
+    params.append('logs', '1')
+
+    if (body.response_times) {
+      params.append('response_times', '1')
+      params.append('response_times_start_date', body.response_times_start_date || '')
+      params.append('response_times_end_date', body.response_times_end_date || '')
+    }
+
     const response = await fetch('https://api.uptimerobot.com/v2/getMonitors', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data)
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params.toString(),
     })
 
-    const newResponse = new Response(response.body, response)
-    newResponse.headers.set('Access-Control-Allow-Origin', '*')
-    return newResponse
+    const result = await response.json()
+    return json(result)
 
   } catch (error) {
-    return new Response('请求失败', { status: 500 })
+    console.error('[cloud-functions/api/status] fetch failed', error)
+    return json({ stat: 'fail', message: error.message }, 500)
   }
-} 
+}

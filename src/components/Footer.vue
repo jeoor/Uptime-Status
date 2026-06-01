@@ -104,6 +104,8 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { Icon } from '@iconify/vue'
 import pkg from '../../package.json'
 
+const currentYear = new Date().getFullYear()
+
 /**
  * 控制返回顶部按钮的显示
  */
