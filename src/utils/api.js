@@ -1,64 +1,79 @@
-/**
- * API 请求相关工具函数
- * 主要用于处理与 UptimeRobot API 的通信
- */
-
 import axios from 'axios'
-import { processMonitorData, generateTimeRanges } from './monitor'
+import {
+  fetchMonitorStatus,
+  fetchMonitorResponseTime as fetchRtApi,
+  RateLimitError,
+  CACHE_TTL_MS
+} from '../../api/status.js'
+import { processMonitorData, patchResponseTimeStats } from './monitor'
 
-/** API 配置常量 */
-const API_URL = import.meta.env.VITE_UPTIMEROBOT_API_URL
-const API_KEY = import.meta.env.VITE_UPTIMEROBOT_API_KEY
+const URL = import.meta.env.VITE_UPTIMEROBOT_API_URL
+const KEY = import.meta.env.VITE_UPTIMEROBOT_API_KEY?.replace(/^["']|["']$/g, '').trim()
+const DIRECT = !URL?.startsWith('/') && (!URL?.startsWith('http') || URL.includes('api.uptimerobot.com'))
+const CACHE_KEY = 'uptime_status_cache'
+const HDRS = KEY ? { Authorization: `Bearer ${KEY}` } : undefined
 
-/* 面板排序方式 */
-const STATUS_SORT = import.meta.env.VITE_UPTIMEROBOT_STATUS_SORT
+export { RateLimitError, patchResponseTimeStats }
+export const isRateLimit = (e) => e instanceof RateLimitError || e?.name === 'RateLimitError'
 
-/**
- * 获取监控数据
- * @async
- * @returns {Promise<Array>} 处理后的监控数据数组
- * @throws {Error} 当 API 请求失败时抛出错误
- */
-export const fetchMonitorData = async () => {
-  const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), 30000)
-
+const readCache = (stale = false) => {
   try {
-    const response = await axios.post(
-      API_URL,
-      {
-        api_key: API_KEY,
-        format: 'json',
-        response_times: 1,
-        logs: 1,
-        custom_uptime_ranges: generateTimeRanges(),
-        response_times_start_date: Math.floor((Date.now() - 24 * 60 * 60 * 1000) / 1000),
-        response_times_end_date: Math.floor(Date.now() / 1000)
-      },
-      {
-        signal: controller.signal,
-        timeout: 30000
-      }
-    )
-
-    if (response.data?.stat !== 'ok') {
-      throw new Error('API 请求失败: ' + response.data?.message || '未知错误')
-    }
-
-    if (STATUS_SORT === 'friendly_name') {
-      return response.data.monitors
-      .sort((a, b) => b.friendly_name - a.friendly_name)
-      .map(processMonitorData)
-    } else if (STATUS_SORT === 'create_datetime') {
-      return response.data.monitors
-      .sort((a, b) => b.create_datetime - a.create_datetime)
-      .map(processMonitorData)
-    }
-
-  } catch (error) {
-    console.error('获取监控数据失败:', error)
-    throw new Error('获取监控数据失败: ' + error.message)
-  } finally {
-    clearTimeout(timeoutId)
-  }
+    const { at, monitors } = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}')
+    if (!at || !Array.isArray(monitors)) return null
+    if (!stale && Date.now() - at >= CACHE_TTL_MS) return null
+    return monitors
+  } catch { return null }
 }
+
+export const writeCache = (monitors) => {
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify({ at: Date.now(), monitors })) } catch {}
+}
+
+export const waitRetry = (sec, onTick) => {
+  let left = Math.max(1, Math.ceil(sec))
+  onTick?.(left)
+  return new Promise((resolve) => {
+    const t = setInterval(() => {
+      left -= 1
+      if (left <= 0) { clearInterval(t); resolve() }
+      else onTick?.(left)
+    }, 1000)
+  })
+}
+
+const axiosErr = (e) => {
+  if (e.response?.status === 429) {
+    const w = Number(e.response.data?.retryAfter) || Number(e.response.headers?.['retry-after']) || 60
+    throw new RateLimitError(w)
+  }
+  throw new Error(e.response?.data?.error || e.message)
+}
+
+async function proxyGet(params) {
+  try {
+    return (await axios.get(URL, { timeout: 60000, params, headers: HDRS })).data
+  } catch (e) { axiosErr(e) }
+}
+
+export const fetchMonitorData = async ({ force = false } = {}) => {
+  const hit = !force && readCache()
+  if (hit) return hit
+
+  let monitors
+  if (DIRECT) {
+    monitors = (await fetchMonitorStatus({ apiKey: KEY })).monitors.map(processMonitorData)
+  } else {
+    const data = await proxyGet(force ? { refresh: 1 } : undefined)
+    if (!Array.isArray(data?.monitors)) throw new Error(data?.error || 'API 失败')
+    monitors = data.monitors.map(processMonitorData)
+  }
+  writeCache(monitors)
+  return monitors
+}
+
+export const fetchMonitorResponseTime = async (monitorId) => {
+  if (DIRECT) return fetchRtApi({ apiKey: KEY, monitorId })
+  return (await proxyGet({ monitorId }))?.responseTimeStats ?? null
+}
+
+export { readCache }
