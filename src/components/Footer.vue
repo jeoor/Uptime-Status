@@ -82,7 +82,7 @@
           >{{ t('footer.uptimeRobot') }}</a> {{ t('footer.apiInterface') }} | {{ t('footer.checkFrequency') }}
         </div>
         <div>
-          {{ t('footer.copyright') }} © {{ pkg['start-year'] }} - {{ new Date().getFullYear() }} <a
+          {{ t('footer.copyright') }} © {{ copyrightYear }} <a
             :href="pkg.url"
             target="_blank"
             rel="noopener noreferrer"
@@ -103,6 +103,11 @@ import { Icon } from '@iconify/vue'
 import pkg from '../../package.json'
 
 const { t } = useI18n()
+
+// 同年只显示一个年份（如 2026），跨年显示 2026 - 2027
+const startYear = Number(pkg['start-year']) || new Date().getFullYear()
+const currentYear = new Date().getFullYear()
+const copyrightYear = currentYear > startYear ? `${startYear} - ${currentYear}` : String(startYear)
 
 /**
  * 控制返回顶部按钮的显示
